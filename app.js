@@ -1,16 +1,10 @@
-/* EXIM WhatsApp Report Generator - versi awal */
+/* EXIM WhatsApp Report Generator - multi Excel + pengecualian nomor daftar */
 const $ = (id) => document.getElementById(id);
 
 const DOC_LABELS = {
-  "27": "BC 2.7",
-  "40": "BC 4.0",
-  "41": "BC 4.1",
-  "261": "BC 2.6.1",
-  "262": "BC 2.6.2",
-  "25": "BC 2.5",
-  "23": "BC 2.3"
+  "27": "BC 2.7", "40": "BC 4.0", "41": "BC 4.1", "261": "BC 2.6.1",
+  "262": "BC 2.6.2", "25": "BC 2.5", "23": "BC 2.3"
 };
-
 const PURPOSE_MASTER = {
   "27": {"1":"PENYERAHAN BKP","2":"PENYERAHAN JKP","3":"RETUR","4":"NON PENYERAHAN","5":"LAINNYA"},
   "40": {"1":"PENYERAHAN BKP","2":"PENYERAHAN JKP","3":"RETUR","4":"NON PENYERAHAN","5":"LAINNYA","6":"PENYERAHAN BKP DENGAN FP101"},
@@ -20,7 +14,6 @@ const PURPOSE_MASTER = {
   "25": {"1":"PENYERAHAN BKP","2":"PENYERAHAN JKP","3":"RETUR","4":"NON PENYERAHAN","5":"LAINNYA"},
   "23": {"1":"PEMBELIAN BKP","2":"PENERIMA JASA BKP"}
 };
-
 const DOC_TYPES = [
   {value:"27-out", label:"BC 2.7 Keluar", code:"27", direction:"out"},
   {value:"27-in", label:"BC 2.7 Masuk", code:"27", direction:"in"},
@@ -31,11 +24,11 @@ const DOC_TYPES = [
   {value:"25-out", label:"BC 2.5", code:"25", direction:"out"},
   {value:"23-in", label:"BC 2.3", code:"23", direction:"in"}
 ];
-
 let records = [];
-let workbookName = "";
+let uploadedFiles = new Map();
+let fileSequence = 0;
 let redNumbers = new Set();
-
+let excludedNumbers = new Set();
 function norm(v) { return String(v ?? "").trim(); }
 function key(v) { return norm(v).replace(/\.0$/, ""); }
 function excelDate(v) {
@@ -72,10 +65,6 @@ function docTypeFor(header, entitas) {
   const mapping = {"40":"40-in","41":"41-out","261":"261-out","262":"262-in","25":"25-out","23":"23-in"};
   return mapping[code] || `unknown-${code}`;
 }
-function headerCode(typeValue) {
-  const t = DOC_TYPES.find(x => x.value === typeValue);
-  return t?.code || "";
-}
 function headerDateLabel(typeValue) {
   const t = DOC_TYPES.find(x => x.value === typeValue);
   return t?.direction === "in" ? "Tanggal Masuk" : "Tanggal Keluar";
@@ -92,9 +81,7 @@ function uniqueSortedDates(items) {
     return new Date(ya,ma-1,da)-new Date(yb,mb-1,db);
   });
 }
-function fmtQty(n) {
-  return new Intl.NumberFormat("id-ID", {maximumFractionDigits: 3}).format(n);
-}
+function fmtQty(n) { return new Intl.NumberFormat("id-ID", {maximumFractionDigits: 3}).format(n); }
 function readSheet(wb, name) {
   const ws = wb.Sheets[name];
   if (!ws) throw new Error(`Sheet ${name} tidak ditemukan.`);
@@ -121,7 +108,6 @@ function parseWorkbook(wb) {
     if (!goodsByAju.has(aju)) goodsByAju.set(aju,[]);
     goodsByAju.get(aju).push(r);
   }
-
   const result = [];
   for (const h of headerRows.slice(1)) {
     const aju = key(h[0]); if (!aju) continue;
@@ -135,16 +121,14 @@ function parseWorkbook(wb) {
     const partyEntity = entities.find(e => key(e[2]) === defaultPartyCode);
     const regNo = key(h[93]); // HEADER kolom CP = NOMOR DAFTAR (0-based index 93)
     const regDate = h[94];    // HEADER kolom CQ = TANGGAL DAFTAR (0-based index 94)
-    const purposeCode = h[13]; // HEADER kolom N = KODE TUJUAN PENGIRIMAN
-
+    const purposeCode = h[13];
     const packages = new Map(), seals = [];
     for (const p of (packByAju.get(aju) || [])) {
       const pkgCode = norm(p[2]), qty = Number(p[3] || 0), seal = norm(p[5]);
       if (pkgCode) packages.set(pkgCode,(packages.get(pkgCode)||0)+qty);
       if (seal && !seals.includes(seal)) seals.push(seal);
     }
-    const quantities = new Map();
-    const descriptions = [];
+    const quantities = new Map(), descriptions = [];
     for (const g of (goodsByAju.get(aju) || [])) {
       const unit = norm(g[9]), qty = Number(g[10] || 0), desc = norm(g[4]);
       if (unit && Number.isFinite(qty) && qty !== 0) quantities.set(unit,(quantities.get(unit)||0)+qty);
@@ -171,6 +155,18 @@ function currentPartyMode() {
   const mode = $("partyMode").value;
   return mode === "auto" ? expectedPartyMode($("docType").value) : mode;
 }
+function manualExcludedNumbers() {
+  return new Set(norm($("excludeManual").value).split(/[\n,;]+/).map(s => key(s)).filter(Boolean));
+}
+function isExcluded(r) {
+  return excludedNumbers.has(key(r.regNo)) || manualExcludedNumbers().has(key(r.regNo));
+}
+function updateExcludeStatus() {
+  const manual = manualExcludedNumbers();
+  const all = new Set([...excludedNumbers, ...manual]);
+  const count = records.filter(r => all.has(key(r.regNo))).length;
+  $("excludeStatus").textContent = `${all.size} nomor daftar unik dikecualikan; ${count} dokumen cocok akan dikeluarkan dari laporan.`;
+}
 function refreshPartyOptions() {
   const mode = currentPartyMode();
   const previous = $("partyName").value;
@@ -188,23 +184,86 @@ function renderRedList() {
   const items = selectedTypeRecords().filter(r => {
     const currentName = currentPartyMode() === "customer" ? r.customerName : r.supplierName;
     const partyMatch = $("partyName").value === "__ALL__" || currentName === $("partyName").value;
-    const text = `${r.regNo} ${currentName} ${r.aju}`.toLowerCase();
-    return partyMatch && text.includes(q);
+    return partyMatch && `${r.regNo} ${currentName} ${r.aju} ${r.sourceName}`.toLowerCase().includes(q);
   });
   if (!items.length) { list.className="red-list empty"; list.textContent="Tidak ada dokumen sesuai pilihan."; return; }
   list.className="red-list";
   items.forEach(r => {
     const label=document.createElement("label"); label.className="red-row";
-    const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=redNumbers.has(r.aju);
-    cb.addEventListener("change",()=>{ if(cb.checked) redNumbers.add(r.aju); else redNumbers.delete(r.aju); renderRedList(); });
+    const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=redNumbers.has(r.recordId);
+    cb.addEventListener("change",()=>{ if(cb.checked) redNumbers.add(r.recordId); else redNumbers.delete(r.recordId); renderRedList(); updateOutput(); });
     const meta=document.createElement("span"); meta.className="meta";
     const title=document.createElement("strong"); title.textContent=r.regNo;
     const currentName = currentPartyMode() === "customer" ? r.customerName : r.supplierName;
-    const small=document.createElement("small"); small.textContent=`${currentName || "(Nama pihak tidak ditemukan)"} · ${dateText(r.regDate)||"Tanggal daftar kosong"}`;
+    const small=document.createElement("small"); small.textContent=`${currentName || "(Nama pihak tidak ditemukan)"} · ${dateText(r.regDate)||"Tanggal daftar kosong"} · ${r.sourceName}`;
     meta.append(title,small); label.append(cb,meta);
-    if (redNumbers.has(r.aju)) { const badge=document.createElement("span"); badge.className="red-flag"; badge.textContent="MERAH"; label.append(badge); }
+    if (redNumbers.has(r.recordId)) { const badge=document.createElement("span"); badge.className="red-flag"; badge.textContent="MERAH"; label.append(badge); }
     list.append(label);
   });
+}
+function renderExcludeList() {
+  const q = norm($("excludeSearch").value).toLowerCase();
+  const list = $("excludeList"); list.innerHTML = "";
+  const items = selectedTypeRecords().filter(r => {
+    const name = currentPartyMode() === "customer" ? r.customerName : r.supplierName;
+    return `${r.regNo} ${name} ${r.aju} ${r.sourceName}`.toLowerCase().includes(q);
+  });
+  if (!items.length) { list.className="exclude-list empty"; list.textContent="Tidak ada nomor daftar sesuai pencarian."; updateExcludeStatus(); return; }
+  list.className="exclude-list";
+  const seen = new Set();
+  items.forEach(r => {
+    const regNo = key(r.regNo);
+    if (seen.has(regNo)) return;
+    seen.add(regNo);
+    const label=document.createElement("label"); label.className="exclude-row";
+    const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=excludedNumbers.has(regNo);
+    cb.addEventListener("change",()=>{
+      if(cb.checked) excludedNumbers.add(regNo); else excludedNumbers.delete(regNo);
+      renderExcludeList(); updateOutput();
+    });
+    const meta=document.createElement("span"); meta.className="meta";
+    const title=document.createElement("strong"); title.textContent=regNo;
+    const currentName = currentPartyMode() === "customer" ? r.customerName : r.supplierName;
+    const small=document.createElement("small"); small.textContent=`${currentName || "(Nama pihak tidak ditemukan)"} · ${dateText(r.regDate)||"Tanggal daftar kosong"}`;
+    meta.append(title,small); label.append(cb,meta); list.append(label);
+  });
+  updateExcludeStatus();
+}
+function renderUploadedFiles() {
+  const box = $("uploadedFiles"); box.innerHTML = "";
+  if (!uploadedFiles.size) {
+    box.className = "uploaded-files empty"; box.textContent = "Belum ada file Excel yang ditambahkan.";
+    $("clearFilesBtn").disabled = true; return;
+  }
+  box.className = "uploaded-files";
+  for (const [fileId, item] of uploadedFiles) {
+    const row = document.createElement("div"); row.className = "uploaded-file";
+    const info = document.createElement("span"); info.textContent = `${item.name} — ${item.records.length} dokumen`;
+    const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Hapus";
+    remove.addEventListener("click", () => removeUploadedFile(fileId));
+    row.append(info, remove); box.append(row);
+  }
+  $("clearFilesBtn").disabled = false;
+}
+function removeUploadedFile(fileId) {
+  const item = uploadedFiles.get(fileId);
+  if (!item) return;
+  item.records.forEach(r => redNumbers.delete(r.recordId));
+  uploadedFiles.delete(fileId);
+  records = [...uploadedFiles.values()].flatMap(x => x.records);
+  if (!records.length) {
+    $("docType").disabled = true; $("partyMode").disabled = true; $("partyName").disabled = true;
+    $("generateBtn").disabled = true; $("copyBtn").disabled = true;
+    $("docType").innerHTML = '<option value="">Unggah Excel terlebih dahulu</option>';
+    $("partyName").innerHTML = '<option value="__ALL__">Semua pihak</option>';
+    $("redList").className = "red-list empty"; $("redList").textContent = "Unggah Excel untuk menampilkan daftar dokumen.";
+    $("excludeList").className = "exclude-list empty"; $("excludeList").textContent = "Unggah Excel untuk menampilkan nomor daftar.";
+    $("output").value = ""; $("fileStatus").textContent = "Semua file telah dihapus.";
+  } else {
+    setupDocTypes(); refreshAll();
+    $("fileStatus").textContent = `${uploadedFiles.size} file tersisa, ${records.length} dokumen dibaca.`;
+  }
+  renderUploadedFiles(); updateExcludeStatus();
 }
 function sumMap(map) {
   return [...map.entries()].filter(([,v])=>v!==0).map(([k,v])=>`${fmtQty(v)} ${k}`).join(" + ") || "-";
@@ -217,38 +276,29 @@ function buildReport() {
   if (!type) return "";
   const mode = currentPartyMode();
   const partyFilter = $("partyName").value;
-  const docs = selectedTypeRecords().map(r => ({
-    ...r,
-    reportPartyName: mode === "customer" ? r.customerName : r.supplierName
-  })).filter(r => r.reportPartyName && (partyFilter === "__ALL__" || r.reportPartyName === partyFilter));
-  if (!docs.length) return "Tidak ada dokumen yang sesuai dengan filter.";
-
+  const docs = selectedTypeRecords().map(r => ({...r, reportPartyName: mode === "customer" ? r.customerName : r.supplierName}))
+    .filter(r => r.reportPartyName && (partyFilter === "__ALL__" || r.reportPartyName === partyFilter) && !isExcluded(r));
+  if (!docs.length) return "Tidak ada dokumen yang sesuai dengan filter atau semua nomor daftar telah dikecualikan.";
   const movementDateRaw = $("movementDate").value;
   const movementDate = movementDateRaw ? dateText(new Date(`${movementDateRaw}T12:00:00`)) : dateText(new Date());
   const goodsType = norm($("goodsType").value) || "PERLU DIISI";
   const output = [];
-
-  // Pengelompokan: jenis dokumen (dipilih di filter) -> pihak -> jalur.
-  // Tujuan transaksi menjadi baris rincian di dalam satu laporan, bukan laporan terpisah.
   const partyGroups = new Map();
   docs.forEach(r => {
     const party = r.reportPartyName || "(Nama pihak tidak ditemukan)";
     if (!partyGroups.has(party)) partyGroups.set(party, []);
     partyGroups.get(party).push(r);
   });
-
   for (const [partyName, partyDocs] of partyGroups) {
     const routeGroups = new Map();
     partyDocs.forEach(r => {
-      const route = redNumbers.has(r.aju) ? "MERAH" : "HIJAU";
+      const route = redNumbers.has(r.recordId) ? "MERAH" : "HIJAU";
       if (!routeGroups.has(route)) routeGroups.set(route, []);
       routeGroups.get(route).push(r);
     });
-
     for (const [route, group] of routeGroups) {
       output.push(`${type.label.toUpperCase()}`);
       output.push(`${mode === "customer" ? "Customer" : "Supplier"} : ${partyName}`);
-
       const purposeGroups = new Map();
       group.forEach(r => {
         if (!purposeGroups.has(r.purpose)) purposeGroups.set(r.purpose, []);
@@ -258,14 +308,10 @@ function buildReport() {
         const numbers = purposeDocs.map(r => r.regNo).filter(n => n && !n.startsWith("(") && n !== "0");
         output.push(`${type.label.toUpperCase()} (${route} | ${purpose}) : ${numbers.join(", ") || "-"}`);
       }
-
       const allSeals = [...new Set(group.flatMap(r => r.seals))];
-      if (["27-out","27-in","23-in"].includes(type.value)) {
-        output.push(`No. Segel : ${allSeals.join(", ") || "-"}`);
-      }
+      if (["27-out","27-in","23-in"].includes(type.value)) output.push(`No. Segel : ${allSeals.join(", ") || "-"}`);
       output.push(`Jumlah Dokumen : ${group.length} Dokumen`);
       output.push(`Jenis Barang : ${goodsType}`);
-
       const quantities = new Map(), packages = new Map();
       group.forEach(r => {
         r.quantities.forEach((v,k) => quantities.set(k,(quantities.get(k)||0)+v));
@@ -273,8 +319,6 @@ function buildReport() {
       });
       output.push(`Jumlah Barang : ${sumMap(quantities)}`);
       output.push(`Jumlah Kemasan : ${packageText(packages)}`);
-
-      // Tanggal Dokumen berasal dari HEADER kolom CQ (Tanggal Daftar).
       const dates = uniqueSortedDates(group.map(r => excelDate(r.regDate)));
       output.push(`Tanggal Dokumen : ${dates.join(" & ") || "-"}`);
       output.push(`${headerDateLabel(type.value)} : ${movementDate}`);
@@ -283,39 +327,69 @@ function buildReport() {
   }
   return output.join("\n").trim();
 }
+function updateOutput() {
+  if (records.length && !$ ("generateBtn").disabled) $("output").value = buildReport();
+}
 function refreshAll() {
   refreshPartyOptions();
   renderRedList();
-  $("generateBtn").disabled = false;
-  $("copyBtn").disabled = false;
-  $("output").value = buildReport();
+  renderExcludeList();
+  const hasRecords = records.length > 0;
+  $("generateBtn").disabled = !hasRecords;
+  $("copyBtn").disabled = !hasRecords;
+  $("output").value = hasRecords ? buildReport() : "";
 }
 function setupDocTypes() {
+  const previous = $("docType").value;
+  const typesPresent = new Set(records.map(r => r.typeValue));
   $("docType").innerHTML = "";
-  DOC_TYPES.forEach(t=>{const o=document.createElement("option");o.value=t.value;o.textContent=t.label;$("docType").append(o);});
+  DOC_TYPES.filter(t => typesPresent.has(t.value)).forEach(t=>{const o=document.createElement("option");o.value=t.value;o.textContent=t.label;$("docType").append(o);});
+  if (![...$("docType").options].some(o => o.value === previous)) $("docType").selectedIndex = 0;
 }
 $("excelFile").addEventListener("change", async (event) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  $("fileStatus").textContent = `Membaca ${file.name}...`;
-  try {
-    const data = await file.arrayBuffer();
-    const wb = XLSX.read(data,{type:"array",cellDates:true});
-    records = parseWorkbook(wb);
-    workbookName = file.name;
-    redNumbers = new Set();
-    setupDocTypes();
-    $("docType").disabled = false;
-    $("partyMode").disabled = false;
-    $("partyName").disabled = false;
-    $("movementDate").value = dateInputToday();
-    $("dateLabel").firstChild.textContent = `${headerDateLabel($("docType").value)} `;
-    $("fileStatus").textContent = `${file.name} berhasil dibaca. ${records.length} dokumen ditemukan dari Sheet HEADER.`;
-    refreshAll();
-  } catch (err) {
-    $("fileStatus").textContent = `Gagal membaca Excel: ${err.message}`;
-    console.error(err);
+  const files = [...(event.target.files || [])];
+  if (!files.length) return;
+  const added = [], errors = [];
+  for (const file of files) {
+    const fileId = `file-${++fileSequence}`;
+    $("fileStatus").textContent = `Membaca ${file.name}...`;
+    try {
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data,{type:"array",cellDates:true});
+      const parsed = parseWorkbook(wb);
+      const tagged = parsed.map((r,index)=>({...r, recordId:`${fileId}-${index}-${r.aju}`, sourceId:fileId, sourceName:file.name}));
+      uploadedFiles.set(fileId, {name:file.name, records:tagged});
+      added.push(`${file.name} (${tagged.length} dokumen)`);
+    } catch (err) {
+      errors.push(`${file.name}: ${err.message}`);
+      console.error(err);
+    }
   }
+  records = [...uploadedFiles.values()].flatMap(x => x.records);
+  if (records.length) {
+    setupDocTypes();
+    $("docType").disabled = false; $("partyMode").disabled = false; $("partyName").disabled = false;
+    if (!$("movementDate").value) $("movementDate").value = dateInputToday();
+    $("dateLabel").firstChild.textContent = `${headerDateLabel($("docType").value)} `;
+    refreshAll(); renderUploadedFiles();
+  }
+  const summary = [];
+  if (added.length) summary.push(`Berhasil menambahkan: ${added.join("; ")}.`);
+  if (errors.length) summary.push(`Gagal membaca: ${errors.join("; ")}.`);
+  summary.push(`Total saat ini: ${uploadedFiles.size} file, ${records.length} dokumen.`);
+  $("fileStatus").textContent = summary.join(" ");
+  event.target.value = ""; // izinkan memilih ulang nama file yang sama bila diperlukan
+});
+$("clearFilesBtn").addEventListener("click",()=>{
+  uploadedFiles.clear(); records=[]; redNumbers.clear(); excludedNumbers.clear();
+  $("excludeManual").value=""; $("docType").disabled=true; $("partyMode").disabled=true; $("partyName").disabled=true;
+  $("generateBtn").disabled=true; $("copyBtn").disabled=true;
+  $("docType").innerHTML='<option value="">Unggah Excel terlebih dahulu</option>';
+  $("partyName").innerHTML='<option value="__ALL__">Semua pihak</option>';
+  $("redList").className="red-list empty"; $("redList").textContent="Unggah Excel untuk menampilkan daftar dokumen.";
+  $("excludeList").className="exclude-list empty"; $("excludeList").textContent="Unggah Excel untuk menampilkan nomor daftar.";
+  $("output").value=""; $("fileStatus").textContent="Semua file telah dihapus.";
+  renderUploadedFiles(); updateExcludeStatus();
 });
 $("docType").addEventListener("change",()=>{
   $("dateLabel").firstChild.textContent = `${headerDateLabel($("docType").value)} `;
@@ -326,9 +400,12 @@ $("partyName").addEventListener("change",refreshAll);
 $("goodsType").addEventListener("input",()=>{if(records.length)$("output").value=buildReport();});
 $("movementDate").addEventListener("change",()=>{if(records.length)$("output").value=buildReport();});
 $("redSearch").addEventListener("input",renderRedList);
+$("excludeSearch").addEventListener("input",renderExcludeList);
+$("excludeManual").addEventListener("input",()=>{updateExcludeStatus(); if(records.length)$("output").value=buildReport();});
 $("generateBtn").addEventListener("click",()=>{$("output").value=buildReport();$("outputStatus").textContent="Laporan diperbarui. Periksa isi sebelum dikirim.";});
 $("copyBtn").addEventListener("click",async()=>{
   try { await navigator.clipboard.writeText($("output").value); $("outputStatus").textContent="Laporan berhasil disalin."; }
   catch { $("output").focus(); $("output").select(); $("outputStatus").textContent="Browser tidak mengizinkan salin otomatis. Tekan Ctrl+C setelah teks dipilih."; }
 });
 $("movementDate").value = dateInputToday();
+updateExcludeStatus();

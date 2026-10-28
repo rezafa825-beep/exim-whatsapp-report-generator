@@ -14,14 +14,16 @@
       <h1>EXIM WhatsApp Report Generator</h1>
       <p class="sub">Baca file Excel secara lokal, pilih dokumen, atur jalur, lalu buat laporan siap salin ke WhatsApp.</p>
     </header>
-
     <section class="panel">
       <h2>1. Unggah file Excel CEISA</h2>
-      <label class="file-label" for="excelFile">Pilih file .xlsx atau .xls</label>
+      <label class="file-label" for="excelFile">Pilih file .xlsx atau .xls untuk ditambahkan</label>
       <input id="excelFile" type="file" accept=".xlsx,.xls,.xlsm">
-      <p id="fileStatus" class="hint">File diproses di browser ini. Jangan unggah file Excel perusahaan ke repository GitHub.</p>
+      <div class="file-actions">
+        <button id="clearFilesBtn" type="button" class="secondary" disabled>Hapus Semua File</button>
+      </div>
+      <div id="uploadedFiles" class="uploaded-files empty">Belum ada file Excel yang ditambahkan.</div>
+      <p id="fileStatus" class="hint">Pilih satu file, lalu pilih file berikutnya untuk menambahkannya. File diproses di browser ini; jangan unggah file Excel perusahaan ke repository GitHub.</p>
     </section>
-
     <section class="panel">
       <h2>2. Filter laporan</h2>
       <div class="grid">
@@ -51,7 +53,6 @@
       </div>
       <p class="hint">Mode Otomatis mengikuti alur dokumen. Pilihan Customer atau Supplier dapat diubah manual. Daftar nama diambil dari Sheet ENTITAS.</p>
     </section>
-
     <section class="panel">
       <div class="section-title">
         <div>
@@ -62,9 +63,18 @@
       </div>
       <div id="redList" class="red-list empty">Unggah Excel untuk menampilkan daftar dokumen.</div>
     </section>
-
     <section class="panel">
-      <h2>4. Pratinjau laporan WhatsApp</h2>
+      <h2>4. Pengecualian nomor daftar</h2>
+      <p class="hint">Centang nomor daftar yang tidak ingin dimasukkan ke laporan, atau ketik nomor secara manual. Pemilihan ini tidak menghapus data Excel.</p>
+      <label for="excludeSearch">Cari nomor daftar / nama pihak</label>
+      <input id="excludeSearch" type="search" placeholder="Cari nomor daftar atau nama pihak">
+      <div id="excludeList" class="exclude-list empty">Unggah Excel untuk menampilkan nomor daftar.</div>
+      <label for="excludeManual">Nomor daftar yang dikecualikan secara manual</label>
+      <textarea id="excludeManual" rows="3" placeholder="Masukkan nomor daftar, pisahkan dengan koma atau baris baru. Contoh: 023537, 023640"></textarea>
+      <p id="excludeStatus" class="hint" aria-live="polite">Belum ada nomor daftar yang dikecualikan.</p>
+    </section>
+    <section class="panel">
+      <h2>5. Pratinjau laporan WhatsApp</h2>
       <div class="actions">
         <button id="generateBtn" disabled>Buat / Perbarui Laporan</button>
         <button id="copyBtn" class="secondary" disabled>Salin Laporan</button>
@@ -72,7 +82,7 @@
       <textarea id="output" rows="18" placeholder="Laporan akan tampil di sini..." spellcheck="false"></textarea>
       <p id="outputStatus" class="hint" aria-live="polite"></p>
     </section>
-    <footer>Versi awal · Pemrosesan Excel dilakukan di browser · Periksa hasil sebelum dikirim.</footer>
+    <footer>Versi pengembangan · Pemrosesan Excel dilakukan di browser · Periksa hasil sebelum dikirim.</footer>
   </main>
   <script src="app.js"></script>
 </body>
