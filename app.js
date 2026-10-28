@@ -118,10 +118,19 @@ function parseWorkbook(wb) {
     const customerEntity = entities.find(e => key(e[2]) === "8");
     // Pengecualian BC 2.3: supplier menggunakan Kode Entitas 5 (kolom C),
     // dan nama diambil dari kolom F pada baris ENTITAS yang sama.
+    // Pengecualian BC 2.7 Masuk: nama pihak diambil dari Kode Entitas 3
+    // (kolom C), dengan nama pada kolom F di baris yang sama.
+    const is27In = typeValue === "27-in";
     const supplierEntity = docCode === "23"
       ? entities.find(e => key(e[2]) === "5")
-      : entities.find(e => key(e[2]) === "9");
-    const defaultPartyCode = docCode === "23" ? "5" : (type ? (type.direction === "out" ? "8" : "9") : "");
+      : is27In
+        ? entities.find(e => key(e[2]) === "3")
+        : entities.find(e => key(e[2]) === "9");
+    const defaultPartyCode = docCode === "23"
+      ? "5"
+      : is27In
+        ? "3"
+        : (type ? (type.direction === "out" ? "8" : "9") : "");
     const partyEntity = entities.find(e => key(e[2]) === defaultPartyCode);
     const regNo = key(h[93]); // HEADER kolom CP = NOMOR DAFTAR (0-based index 93)
     const regDate = h[94];    // HEADER kolom CQ = TANGGAL DAFTAR (0-based index 94)
