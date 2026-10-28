@@ -1,4 +1,4 @@
-/* EXIM WhatsApp Report Generator - multi Excel + pengecualian nomor daftar */
+/* EXIM WhatsApp Report Generator - multi Excel + pengecualian nomor daftar + label pihak manual */
 const $ = (id) => document.getElementById(id);
 
 const DOC_LABELS = {
@@ -151,9 +151,14 @@ function selectedTypeRecords() {
   const type = $("docType").value;
   return records.filter(r => r.typeValue === type);
 }
+// Mode sumber data tetap mengikuti pemetaan otomatis sistem.
+// Dropdown hanya mengubah label yang ditampilkan pada laporan, bukan sumber nama pihak.
 function currentPartyMode() {
-  const mode = $("partyMode").value;
-  return mode === "auto" ? expectedPartyMode($("docType").value) : mode;
+  return expectedPartyMode($("docType").value);
+}
+function currentPartyLabelMode() {
+  const selected = $("partyMode").value;
+  return selected === "auto" ? currentPartyMode() : selected;
 }
 function manualExcludedNumbers() {
   return new Set(norm($("excludeManual").value).split(/[\n,;]+/).map(s => key(s)).filter(Boolean));
@@ -275,6 +280,7 @@ function buildReport() {
   const type = DOC_TYPES.find(x=>x.value===$("docType").value);
   if (!type) return "";
   const mode = currentPartyMode();
+  const labelMode = currentPartyLabelMode();
   const partyFilter = $("partyName").value;
   const docs = selectedTypeRecords().map(r => ({...r, reportPartyName: mode === "customer" ? r.customerName : r.supplierName}))
     .filter(r => r.reportPartyName && (partyFilter === "__ALL__" || r.reportPartyName === partyFilter) && !isExcluded(r));
@@ -293,7 +299,7 @@ function buildReport() {
     // Satu blok per jenis dokumen + Customer/Supplier. Jalur HIJAU/MERAH
     // menjadi rincian di dalam blok yang sama, bukan blok laporan terpisah.
     output.push(`${type.label.toUpperCase()}`);
-    output.push(`${mode === "customer" ? "Customer" : "Supplier"} : ${partyName}`);
+    output.push(`${labelMode === "customer" ? "Customer" : "Supplier"} : ${partyName}`);
 
     const routePurposeGroups = new Map();
     partyDocs.forEach(r => {

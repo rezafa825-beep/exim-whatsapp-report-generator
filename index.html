@@ -32,7 +32,7 @@
             <option value="">Unggah Excel terlebih dahulu</option>
           </select>
         </label>
-        <label>Mode pihak
+        <label>Keterangan pihak pada laporan
           <select id="partyMode" disabled>
             <option value="auto">Otomatis sesuai jenis dokumen</option>
             <option value="customer">Customer</option>
@@ -51,7 +51,7 @@
           <input id="movementDate" type="date">
         </label>
       </div>
-      <p class="hint">Mode Otomatis mengikuti alur dokumen. Pilihan Customer atau Supplier dapat diubah manual. Daftar nama diambil dari Sheet ENTITAS.</p>
+      <p class="hint">Default mengikuti hasil sistem: dokumen Keluar = Customer, dokumen Masuk = Supplier. Dropdown Customer/Supplier hanya mengubah keterangan pada laporan; pengambilan nama pihak dan filter tetap mengikuti pemetaan data otomatis yang sudah ada.</p>
     </section>
     <section class="panel">
       <div class="section-title">
