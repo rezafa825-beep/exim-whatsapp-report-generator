@@ -115,21 +115,23 @@ function parseWorkbook(wb) {
     const typeValue = docTypeFor(h, entities);
     const type = DOC_TYPES.find(x => x.value === typeValue);
     const docCode = key(h[1]);
+    // BC 2.7 memakai posisi entitas yang berbeda menurut arah dokumen:
+    // Keluar: Chinli = kode 3, customer = kode 8.
+    // Masuk: customer/supplier eksternal = kode 3, Chinli = kode 8.
+    // Untuk laporan, nama pihak eksternal BC 2.7 Masuk diambil dari kode 3.
+    const isBc27 = docCode === "27";
     const customerEntity = entities.find(e => key(e[2]) === "8");
     // Pengecualian BC 2.3: supplier menggunakan Kode Entitas 5 (kolom C),
     // dan nama diambil dari kolom F pada baris ENTITAS yang sama.
-    // Pengecualian BC 2.7 Masuk: nama pihak diambil dari Kode Entitas 3
-    // (kolom C), dengan nama pada kolom F di baris yang sama.
-    const is27In = typeValue === "27-in";
     const supplierEntity = docCode === "23"
       ? entities.find(e => key(e[2]) === "5")
-      : is27In
+      : isBc27 && type?.direction === "in"
         ? entities.find(e => key(e[2]) === "3")
         : entities.find(e => key(e[2]) === "9");
     const defaultPartyCode = docCode === "23"
       ? "5"
-      : is27In
-        ? "3"
+      : isBc27
+        ? (type?.direction === "out" ? "8" : "3")
         : (type ? (type.direction === "out" ? "8" : "9") : "");
     const partyEntity = entities.find(e => key(e[2]) === defaultPartyCode);
     const regNo = key(h[93]); // HEADER kolom CP = NOMOR DAFTAR (0-based index 93)
