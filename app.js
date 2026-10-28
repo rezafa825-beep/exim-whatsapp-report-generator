@@ -125,7 +125,13 @@ function parseWorkbook(wb) {
     const partyEntity = entities.find(e => key(e[2]) === defaultPartyCode);
     const regNo = key(h[93]); // HEADER kolom CP = NOMOR DAFTAR (0-based index 93)
     const regDate = h[94];    // HEADER kolom CQ = TANGGAL DAFTAR (0-based index 94)
-    const purposeCode = h[13];
+    // Pengecualian BC 2.3: Jenis Tujuan Transaksi diambil dari BARANG kolom AZ
+    // (KODE PERHITUNGAN), bukan HEADER kolom N. Ambil kode pertama yang terisi
+    // pada barang dengan nomor aju yang sama; master BC 2.3 memetakan kode 1 dan 2.
+    const goodsForAju = goodsByAju.get(aju) || [];
+    const purposeCode = docCode === "23"
+      ? (goodsForAju.find(g => key(g[51]) !== "")?.[51] ?? "")
+      : h[13];
     const packages = new Map(), seals = [];
     for (const p of (packByAju.get(aju) || [])) {
       const pkgCode = norm(p[2]), qty = Number(p[3] || 0), seal = norm(p[5]);
@@ -133,7 +139,7 @@ function parseWorkbook(wb) {
       if (seal && !seals.includes(seal)) seals.push(seal);
     }
     const quantities = new Map(), descriptions = [];
-    for (const g of (goodsByAju.get(aju) || [])) {
+    for (const g of goodsForAju) {
       const unit = norm(g[9]), qty = Number(g[10] || 0), desc = norm(g[4]);
       if (unit && Number.isFinite(qty) && qty !== 0) quantities.set(unit,(quantities.get(unit)||0)+qty);
       if (desc && !descriptions.includes(desc)) descriptions.push(desc);
