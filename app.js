@@ -116,8 +116,12 @@ function parseWorkbook(wb) {
     const type = DOC_TYPES.find(x => x.value === typeValue);
     const docCode = key(h[1]);
     const customerEntity = entities.find(e => key(e[2]) === "8");
-    const supplierEntity = entities.find(e => key(e[2]) === "9");
-    const defaultPartyCode = type ? (type.direction === "out" ? "8" : "9") : "";
+    // Pengecualian BC 2.3: supplier menggunakan Kode Entitas 5 (kolom C),
+    // dan nama diambil dari kolom F pada baris ENTITAS yang sama.
+    const supplierEntity = docCode === "23"
+      ? entities.find(e => key(e[2]) === "5")
+      : entities.find(e => key(e[2]) === "9");
+    const defaultPartyCode = docCode === "23" ? "5" : (type ? (type.direction === "out" ? "8" : "9") : "");
     const partyEntity = entities.find(e => key(e[2]) === defaultPartyCode);
     const regNo = key(h[93]); // HEADER kolom CP = NOMOR DAFTAR (0-based index 93)
     const regDate = h[94];    // HEADER kolom CQ = TANGGAL DAFTAR (0-based index 94)
