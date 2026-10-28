@@ -290,40 +290,38 @@ function buildReport() {
     partyGroups.get(party).push(r);
   });
   for (const [partyName, partyDocs] of partyGroups) {
-    const routeGroups = new Map();
+    // Satu blok per jenis dokumen + Customer/Supplier. Jalur HIJAU/MERAH
+    // menjadi rincian di dalam blok yang sama, bukan blok laporan terpisah.
+    output.push(`${type.label.toUpperCase()}`);
+    output.push(`${mode === "customer" ? "Customer" : "Supplier"} : ${partyName}`);
+
+    const routePurposeGroups = new Map();
     partyDocs.forEach(r => {
       const route = redNumbers.has(r.recordId) ? "MERAH" : "HIJAU";
-      if (!routeGroups.has(route)) routeGroups.set(route, []);
-      routeGroups.get(route).push(r);
+      const groupKey = `${route}\u0000${r.purpose}`;
+      if (!routePurposeGroups.has(groupKey)) routePurposeGroups.set(groupKey, {route, purpose:r.purpose, docs:[]});
+      routePurposeGroups.get(groupKey).docs.push(r);
     });
-    for (const [route, group] of routeGroups) {
-      output.push(`${type.label.toUpperCase()}`);
-      output.push(`${mode === "customer" ? "Customer" : "Supplier"} : ${partyName}`);
-      const purposeGroups = new Map();
-      group.forEach(r => {
-        if (!purposeGroups.has(r.purpose)) purposeGroups.set(r.purpose, []);
-        purposeGroups.get(r.purpose).push(r);
-      });
-      for (const [purpose, purposeDocs] of purposeGroups) {
-        const numbers = purposeDocs.map(r => r.regNo).filter(n => n && !n.startsWith("(") && n !== "0");
-        output.push(`${type.label.toUpperCase()} (${route} | ${purpose}) : ${numbers.join(", ") || "-"}`);
-      }
-      const allSeals = [...new Set(group.flatMap(r => r.seals))];
-      if (["27-out","27-in","23-in"].includes(type.value)) output.push(`No. Segel : ${allSeals.join(", ") || "-"}`);
-      output.push(`Jumlah Dokumen : ${group.length} Dokumen`);
-      output.push(`Jenis Barang : ${goodsType}`);
-      const quantities = new Map(), packages = new Map();
-      group.forEach(r => {
-        r.quantities.forEach((v,k) => quantities.set(k,(quantities.get(k)||0)+v));
-        r.packages.forEach((v,k) => packages.set(k,(packages.get(k)||0)+v));
-      });
-      output.push(`Jumlah Barang : ${sumMap(quantities)}`);
-      output.push(`Jumlah Kemasan : ${packageText(packages)}`);
-      const dates = uniqueSortedDates(group.map(r => excelDate(r.regDate)));
-      output.push(`Tanggal Dokumen : ${dates.join(" & ") || "-"}`);
-      output.push(`${headerDateLabel(type.value)} : ${movementDate}`);
-      output.push("");
+    for (const {route, purpose, docs:purposeDocs} of routePurposeGroups.values()) {
+      const numbers = purposeDocs.map(r => r.regNo).filter(n => n && !n.startsWith("(") && n !== "0");
+      output.push(`${type.label.toUpperCase()} (${route} | ${purpose}) : ${numbers.join(", ") || "-"}`);
     }
+
+    const allSeals = [...new Set(partyDocs.flatMap(r => r.seals))];
+    if (["27-out","27-in","23-in"].includes(type.value)) output.push(`No. Segel : ${allSeals.join(", ") || "-"}`);
+    output.push(`Jumlah Dokumen : ${partyDocs.length} Dokumen`);
+    output.push(`Jenis Barang : ${goodsType}`);
+    const quantities = new Map(), packages = new Map();
+    partyDocs.forEach(r => {
+      r.quantities.forEach((v,k) => quantities.set(k,(quantities.get(k)||0)+v));
+      r.packages.forEach((v,k) => packages.set(k,(packages.get(k)||0)+v));
+    });
+    output.push(`Jumlah Barang : ${sumMap(quantities)}`);
+    output.push(`Jumlah Kemasan : ${packageText(packages)}`);
+    const dates = uniqueSortedDates(partyDocs.map(r => excelDate(r.regDate)));
+    output.push(`Tanggal Dokumen : ${dates.join(" & ") || "-"}`);
+    output.push(`${headerDateLabel(type.value)} : ${movementDate}`);
+    output.push("");
   }
   return output.join("\n").trim();
 }
