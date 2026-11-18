@@ -349,14 +349,56 @@ function sumMap(map) {
 function packageText(map) {
   return [...map.entries()].filter(([,v])=>v!==0).map(([k,v])=>`${fmtQty(v)} ${k}`).join(" + ") || "-";
 }
+function getFilteredReportDocs() {
+  const mode = currentPartyMode();
+  const partyFilter = $("partyName").value;
+  return selectedTypeRecords()
+    .map(r => ({...r, reportPartyName: mode === "customer" ? r.customerName : r.supplierName}))
+    .filter(r => r.reportPartyName &&
+      (partyFilter === "__ALL__" || r.reportPartyName === partyFilter) &&
+      !isExcluded(r));
+}
+function exportExcelReport() {
+  const type = DOC_TYPES.find(x => x.value === $("docType").value);
+  const docs = getFilteredReportDocs();
+  if (!type || !docs.length) {
+    $("outputStatus").textContent = "Tidak ada dokumen sesuai filter untuk diekspor.";
+    return;
+  }
+
+  const movementDateRaw = $("movementDate").value;
+  const movementDate = movementDateRaw
+    ? dateText(new Date(`${movementDateRaw}T12:00:00`))
+    : "";
+  const partyHeader = currentPartyMode() === "customer" ? "Nama Customer" : "Nama Supplier";
+  const movementHeader = headerDateLabel(type.value);
+  const rows = docs.map(r => ({
+    "Jenis/Kode Dokumen": `${r.typeLabel} (BC ${r.docCode})`,
+    "Nomor AJU": r.aju,
+    "Nomor Daftar": r.regNo,
+    "Tanggal Daftar": dateText(r.regDate),
+    [movementHeader]: movementDate,
+    [partyHeader]: r.reportPartyName
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(rows, {
+    header: ["Jenis/Kode Dokumen", "Nomor AJU", "Nomor Daftar", "Tanggal Daftar", movementHeader, partyHeader]
+  });
+  ws["!cols"] = [
+    {wch:22}, {wch:28}, {wch:22}, {wch:16}, {wch:18}, {wch:42}
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Laporan EXIM");
+  const datePart = movementDateRaw || dateInputToday();
+  const filename = `Laporan_EXIM_${type.value}_${datePart}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  $("outputStatus").textContent = `Berhasil mengekspor ${docs.length} dokumen ke Excel. Isi file mengikuti filter laporan WhatsApp.`;
+}
 function buildReport() {
   const type = DOC_TYPES.find(x=>x.value===$("docType").value);
   if (!type) return "";
-  const mode = currentPartyMode();
   const labelMode = currentPartyLabelMode();
-  const partyFilter = $("partyName").value;
-  const docs = selectedTypeRecords().map(r => ({...r, reportPartyName: mode === "customer" ? r.customerName : r.supplierName}))
-    .filter(r => r.reportPartyName && (partyFilter === "__ALL__" || r.reportPartyName === partyFilter) && !isExcluded(r));
+  const docs = getFilteredReportDocs();
   if (!docs.length) return "Tidak ada dokumen yang sesuai dengan filter atau semua nomor daftar telah dikecualikan.";
   const movementDateRaw = $("movementDate").value;
   const movementDate = movementDateRaw ? dateText(new Date(`${movementDateRaw}T12:00:00`)) : dateText(new Date());
@@ -405,7 +447,9 @@ function buildReport() {
   return output.join("\n").trim();
 }
 function updateOutput() {
-  if (records.length && !$ ("generateBtn").disabled) $("output").value = buildReport();
+  if (records.length && !$("generateBtn").disabled) $("output").value = buildReport();
+  const exportButton = $("exportBtn");
+  if (exportButton) exportButton.disabled = !records.length || !getFilteredReportDocs().length;
 }
 function refreshAll() {
   refreshPartyOptions();
@@ -414,6 +458,7 @@ function refreshAll() {
   const hasRecords = records.length > 0;
   $("generateBtn").disabled = !hasRecords;
   $("copyBtn").disabled = !hasRecords;
+  $("exportBtn").disabled = !hasRecords || !getFilteredReportDocs().length;
   $("output").value = hasRecords ? buildReport() : "";
 }
 function setupDocTypes() {
@@ -481,6 +526,7 @@ $("redSearch").addEventListener("input",renderRedList);
 $("excludeSearch").addEventListener("input",renderExcludeList);
 $("excludeManual").addEventListener("input",()=>{updateExcludeStatus(); if(records.length)$("output").value=buildReport();});
 $("generateBtn").addEventListener("click",()=>{$("output").value=buildReport();$("outputStatus").textContent="Laporan diperbarui. Periksa isi sebelum dikirim.";});
+$("exportBtn").addEventListener("click", exportExcelReport);
 $("copyBtn").addEventListener("click",async()=>{
   try { await navigator.clipboard.writeText($("output").value); $("outputStatus").textContent="Laporan berhasil disalin."; }
   catch { $("output").focus(); $("output").select(); $("outputStatus").textContent="Browser tidak mengizinkan salin otomatis. Tekan Ctrl+C setelah teks dipilih."; }
