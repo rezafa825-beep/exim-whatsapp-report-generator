@@ -331,7 +331,7 @@ function removeUploadedFile(fileId) {
   rebuildRecords();
   if (!records.length) {
     $("docType").disabled = true; $("partyMode").disabled = true; $("partyName").disabled = true;
-    $("generateBtn").disabled = true; $("copyBtn").disabled = true;
+    $("generateBtn").disabled = true; $("copyBtn").disabled = true; $("exportBtn").disabled = true;
     $("docType").innerHTML = '<option value="">Unggah Excel terlebih dahulu</option>';
     $("partyName").innerHTML = '<option value="__ALL__">Semua pihak</option>';
     $("redList").className = "red-list empty"; $("redList").textContent = "Unggah Excel untuk menampilkan daftar dokumen.";
@@ -373,7 +373,7 @@ function exportExcelReport() {
   const partyHeader = currentPartyMode() === "customer" ? "Nama Customer" : "Nama Supplier";
   const movementHeader = headerDateLabel(type.value);
   const rows = docs.map(r => ({
-    "Jenis/Kode Dokumen": `${r.typeLabel} (BC ${r.docCode})`,
+    "Jenis/Kode Dokumen": `${r.typeLabel} (Kode ${r.docCode})`,
     "Nomor AJU": r.aju,
     "Nomor Daftar": r.regNo,
     "Tanggal Daftar": dateText(r.regDate),
