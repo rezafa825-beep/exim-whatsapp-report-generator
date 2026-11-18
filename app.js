@@ -15,12 +15,12 @@ const PURPOSE_MASTER = {
   "23": {"1":"PEMBELIAN BKP","2":"PENERIMA JASA BKP"}
 };
 const DOC_TYPES = [
-  {value:"27-out", label:"BC 2.7 Keluar", code:"27", direction:"out"},
-  {value:"27-in", label:"BC 2.7 Masuk", code:"27", direction:"in"},
-  {value:"40-in", label:"BC 4.0 Masuk", code:"40", direction:"in"},
-  {value:"41-out", label:"BC 4.1 Keluar", code:"41", direction:"out"},
-  {value:"261-out", label:"BC 2.6.1", code:"261", direction:"out"},
+  {value:"27-out", label:"BC 2.7 Out", code:"27", direction:"out"},
+  {value:"27-in", label:"BC 2.7 In", code:"27", direction:"in"},
+  {value:"40-in", label:"BC 4.0", code:"40", direction:"in"},
+  {value:"41-out", label:"BC 4.1", code:"41", direction:"out"},
   {value:"262-in", label:"BC 2.6.2", code:"262", direction:"in"},
+  {value:"261-out", label:"BC 2.6.1", code:"261", direction:"out"},
   {value:"25-out", label:"BC 2.5", code:"25", direction:"out"},
   {value:"23-in", label:"BC 2.3", code:"23", direction:"in"}
 ];
@@ -332,7 +332,7 @@ function removeUploadedFile(fileId) {
   rebuildRecords();
   if (!records.length) {
     $("docType").disabled = true; $("partyMode").disabled = true; $("partyName").disabled = true;
-    $("generateBtn").disabled = true; $("copyBtn").disabled = true; $("exportBtn").disabled = true;
+    $("generateBtn").disabled = true; $("copyBtn").disabled = true; $("exportBtn").disabled = true; if ($("copyExcelBtn")) $("copyExcelBtn").disabled = true;
     $("docType").innerHTML = '<option value="">Unggah Excel terlebih dahulu</option>';
     $("partyName").innerHTML = '<option value="__ALL__">Semua pihak</option>';
     $("redList").className = "red-list empty"; $("redList").textContent = "Unggah Excel untuk menampilkan daftar dokumen.";
@@ -407,43 +407,82 @@ function updateExportSelectionStatus(docs = getFilteredReportDocs()) {
 function updateExportButton() {
   const docs = getFilteredReportDocs();
   const selected = docs.filter(r => selectedExportIds.has(r.recordId)).length;
-  $("exportBtn").disabled = !selected;
+  $("exportBtn").disabled = !selected;\n  if ($("copyExcelBtn")) $("copyExcelBtn").disabled = !selected;
 }
-function exportExcelReport() {
-  const type = DOC_TYPES.find(x => x.value === $("docType").value);
+function getExcelReportRows() {
   const docs = getFilteredReportDocs().filter(r => selectedExportIds.has(r.recordId));
-  if (!type || !docs.length) {
-    $("outputStatus").textContent = "Tidak ada dokumen sesuai filter untuk diekspor.";
-    return;
-  }
-
   const movementDateRaw = $("movementDate").value;
   const movementDate = movementDateRaw
     ? dateText(new Date(`${movementDateRaw}T12:00:00`))
     : "";
-  const partyHeader = currentPartyMode() === "customer" ? "Nama Customer" : "Nama Supplier";
-  const movementHeader = headerDateLabel(type.value);
-  const rows = docs.map(r => ({
-    "Jenis/Kode Dokumen": `${r.typeLabel} (Kode ${r.docCode})`,
-    "Nomor AJU": r.aju,
-    "Nomor Daftar": r.regNo,
+  // Format mengikuti template Laporan EXIM: enam kolom tetap A-F.
+  // Kolom E mengikuti tanggal pergerakan yang dipilih pada pengaturan laporan.
+  return docs.map(r => ({
+    "Jenis/Kode Dokumen": r.typeLabel,
+    "Nomor AJU": String(r.aju ?? ""),
+    "Nomor Daftar": String(r.regNo ?? ""),
     "Tanggal Daftar": dateText(r.regDate),
-    [movementHeader]: movementDate,
-    [partyHeader]: r.reportPartyName
+    "Tanggal Keluar": movementDate,
+    "Nama Customer": r.reportPartyName || ""
   }));
-
-  const ws = XLSX.utils.json_to_sheet(rows, {
-    header: ["Jenis/Kode Dokumen", "Nomor AJU", "Nomor Daftar", "Tanggal Daftar", movementHeader, partyHeader]
-  });
+}
+function buildExcelWorksheet(rows) {
+  const headers = ["Jenis/Kode Dokumen","Nomor AJU","Nomor Daftar","Tanggal Daftar","Tanggal Keluar","Nama Customer"];
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows.map(r => headers.map(h => String(r[h] ?? "")))]);
   ws["!cols"] = [
-    {wch:22}, {wch:28}, {wch:22}, {wch:16}, {wch:18}, {wch:42}
+    {wch:22.832}, {wch:28.832}, {wch:22.832}, {wch:16.832}, {wch:18.832}, {wch:42.832}
   ];
+  // Pastikan AJU dan Nomor Daftar benar-benar bertipe teks agar nol di depan tidak hilang.
+  for (let row=2; row<=rows.length+1; row++) {
+    for (const col of ["B","C"]) {
+      const cell=ws[`${col}${row}`];
+      if (cell) { cell.t="s"; cell.v=String(cell.v); }
+    }
+  }
+  return ws;
+}
+async function copyExcelReport() {
+  const rows = getExcelReportRows();
+  if (!rows.length) {
+    $("outputStatus").textContent = "Tidak ada dokumen yang dipilih untuk disalin ke Excel.";
+    return;
+  }
+  const headers = ["Jenis/Kode Dokumen","Nomor AJU","Nomor Daftar","Tanggal Daftar","Tanggal Keluar","Nama Customer"];
+  // Tanda apostrof di depan AJU dan Nomor Daftar menjaga nol awal saat ditempel ke Excel.
+  const lines = [headers, ...rows.map(r => headers.map(h => {
+    const value = String(r[h] ?? "");
+    return (h === "Nomor AJU" || h === "Nomor Daftar") && value ? `'${value}` : value;
+  }))];
+  const tsv = lines.map(line => line.map(value => String(value).replace(/\t/g," ").replace(/\r?\n/g," ")).join("\t")).join("\n");
+  try {
+    await navigator.clipboard.writeText(tsv);
+    $("outputStatus").textContent = `Berhasil menyalin ${rows.length} baris data Excel. Buka Excel lalu tempel mulai dari sel A1.`;
+  } catch {
+    const helper=document.createElement("textarea");
+    helper.value=tsv;
+    helper.style.position="fixed"; helper.style.opacity="0";
+    document.body.append(helper); helper.focus(); helper.select();
+    const ok=document.execCommand("copy");
+    helper.remove();
+    $("outputStatus").textContent = ok
+      ? `Berhasil menyalin ${rows.length} baris data Excel. Tempel mulai dari sel A1.`
+      : "Browser tidak mengizinkan penyalinan otomatis. Silakan coba kembali melalui browser.";
+  }
+}
+function exportExcelReport() {
+  const type = DOC_TYPES.find(x => x.value === $("docType").value);
+  const rows = getExcelReportRows();
+  if (!type || !rows.length) {
+    $("outputStatus").textContent = "Tidak ada dokumen sesuai filter untuk diekspor.";
+    return;
+  }
+  const ws = buildExcelWorksheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Laporan EXIM");
-  const datePart = movementDateRaw || dateInputToday();
+  const datePart = $("movementDate").value || dateInputToday();
   const filename = `Laporan_EXIM_${type.value}_${datePart}.xlsx`;
   XLSX.writeFile(wb, filename);
-  $("outputStatus").textContent = `Berhasil mengekspor ${docs.length} dokumen yang dipilih ke Excel. Isi file mengikuti filter laporan WhatsApp.`;
+  $("outputStatus").textContent = `Berhasil mengekspor ${rows.length} dokumen. Format mengikuti template Laporan EXIM.`;
 }
 function buildReport() {
   const type = DOC_TYPES.find(x=>x.value===$("docType").value);
@@ -559,7 +598,7 @@ $("clearFilesBtn").addEventListener("click",()=>{
   uploadedFiles.clear(); records=[]; duplicateRecords=[]; redNumbers.clear(); excludedNumbers.clear(); selectedExportIds.clear();
   updateDuplicateStatus();
   $("excludeManual").value=""; $("docType").disabled=true; $("partyMode").disabled=true; $("partyName").disabled=true;
-  $("generateBtn").disabled=true; $("copyBtn").disabled=true; $("exportBtn").disabled=true;
+  $("generateBtn").disabled=true; $("copyBtn").disabled=true; $("exportBtn").disabled=true; if ($("copyExcelBtn")) $("copyExcelBtn").disabled=true;
   $("docType").innerHTML='<option value="">Unggah Excel terlebih dahulu</option>';
   $("partyName").innerHTML='<option value="__ALL__">Semua pihak</option>';
   $("redList").className="red-list empty"; $("redList").textContent="Unggah Excel untuk menampilkan daftar dokumen.";
@@ -590,7 +629,7 @@ $("redSearch").addEventListener("input",renderRedList);
 $("excludeSearch").addEventListener("input",renderExcludeList);
 $("excludeManual").addEventListener("input",()=>{updateExcludeStatus(); if(records.length)$("output").value=buildReport();});
 $("generateBtn").addEventListener("click",()=>{$("output").value=buildReport();$("outputStatus").textContent="Laporan diperbarui. Periksa isi sebelum dikirim.";});
-$("exportBtn").addEventListener("click", exportExcelReport);
+$("exportBtn").addEventListener("click", exportExcelReport);\n$("copyExcelBtn").addEventListener("click", copyExcelReport);
 $("copyBtn").addEventListener("click",async()=>{
   try { await navigator.clipboard.writeText($("output").value); $("outputStatus").textContent="Laporan berhasil disalin."; }
   catch { $("output").focus(); $("output").select(); $("outputStatus").textContent="Browser tidak mengizinkan salin otomatis. Tekan Ctrl+C setelah teks dipilih."; }
