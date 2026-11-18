@@ -419,7 +419,7 @@ function getExcelReportRows() {
   // Format mengikuti template Laporan EXIM: enam kolom tetap A-F.
   // Kolom E mengikuti tanggal pergerakan yang dipilih pada pengaturan laporan.
   return docs.map(r => ({
-    "Jenis/Kode Dokumen": r.typeLabel,
+    "Jenis/Kode Dokumen": `${r.typeLabel} (Kode ${r.docCode})`,
     "Nomor AJU": String(r.aju ?? ""),
     "Nomor Daftar": String(r.regNo ?? ""),
     "Tanggal Daftar": dateText(r.regDate),
