@@ -15,22 +15,67 @@ const PURPOSE_MASTER = {
   "23": {"1":"PEMBELIAN BKP","2":"PENERIMA JASA BKP"}
 };
 const DOC_TYPES = [
-  {value:"27-out", label:"BC 2.7 Keluar", code:"27", direction:"out"},
-  {value:"27-in", label:"BC 2.7 Masuk", code:"27", direction:"in"},
-  {value:"40-in", label:"BC 4.0 Masuk", code:"40", direction:"in"},
-  {value:"41-out", label:"BC 4.1 Keluar", code:"41", direction:"out"},
-  {value:"261-out", label:"BC 2.6.1", code:"261", direction:"out"},
+  {value:"27-out", label:"BC 2.7 Out", code:"27", direction:"out"},
+  {value:"27-in", label:"BC 2.7 In", code:"27", direction:"in"},
+  {value:"40-in", label:"BC 4.0", code:"40", direction:"in"},
+  {value:"41-out", label:"BC 4.1", code:"41", direction:"out"},
   {value:"262-in", label:"BC 2.6.2", code:"262", direction:"in"},
+  {value:"261-out", label:"BC 2.6.1", code:"261", direction:"out"},
   {value:"25-out", label:"BC 2.5", code:"25", direction:"out"},
   {value:"23-in", label:"BC 2.3", code:"23", direction:"in"}
 ];
 let records = [];
+let duplicateRecords = [];
 let uploadedFiles = new Map();
 let fileSequence = 0;
 let redNumbers = new Set();
 let excludedNumbers = new Set();
+let selectedExportIds = new Set();
 function norm(v) { return String(v ?? "").trim(); }
 function key(v) { return norm(v).replace(/\.0$/, ""); }
+function updateDuplicateStatus() {
+  const panel = $("duplicateStatus");
+  if (!panel) return;
+  if (!uploadedFiles.size) {
+    panel.className = "duplicate-status empty";
+    panel.textContent = "Belum ada data untuk diperiksa.";
+    return;
+  }
+  if (!duplicateRecords.length) {
+    panel.className = "duplicate-status clean";
+    panel.textContent = `Tidak ditemukan duplikat. ${records.length} dokumen unik siap diproses.`;
+    return;
+  }
+  const lines = duplicateRecords.slice(0, 5).map((d, i) =>
+    `${i + 1}. AJU: ${d.aju}\n   Dipertahankan: ${d.firstSourceName}\n   Dilewati: ${d.duplicateSourceName}`
+  );
+  if (duplicateRecords.length > 5) lines.push(`...dan ${duplicateRecords.length - 5} duplikat lainnya.`);
+  panel.className = "duplicate-status warning";
+  panel.textContent = `Ditemukan ${duplicateRecords.length} data duplikat. ${records.length} dokumen unik diproses; data duplikat otomatis dilewati.\n\n${lines.join("\n\n")}`;
+}
+function rebuildRecords() {
+  const seen = new Map();
+  const unique = [];
+  duplicateRecords = [];
+  for (const item of uploadedFiles.values()) {
+    for (const r of item.records) {
+      const ajuKey = key(r.aju).toUpperCase();
+      if (!ajuKey) { unique.push(r); continue; }
+      if (seen.has(ajuKey)) {
+        duplicateRecords.push({
+          aju: ajuKey,
+          firstSourceName: seen.get(ajuKey).sourceName,
+          duplicateSourceName: r.sourceName
+        });
+        continue;
+      }
+      seen.set(ajuKey, r);
+      unique.push(r);
+    }
+  }
+  records = unique;
+  updateDuplicateStatus();
+}
 function excelDate(v) {
   if (v instanceof Date && !isNaN(v)) return v;
   if (typeof v === "number" && v > 20000 && v < 80000) {
@@ -81,6 +126,14 @@ function uniqueSortedDates(items) {
     return new Date(ya,ma-1,da)-new Date(yb,mb-1,db);
   });
 }
+// Urutkan nomor daftar dan nomor segel secara natural: angka 2 sebelum 10,
+// huruf A-Z tanpa membedakan kapitalisasi.
+function naturalSort(a, b) {
+  return String(a).localeCompare(String(b), "id", {
+    numeric: true,
+    sensitivity: "base"
+  });
+}
 function fmtQty(n) { return new Intl.NumberFormat("id-ID", {maximumFractionDigits: 3}).format(n); }
 function readSheet(wb, name) {
   const ws = wb.Sheets[name];
@@ -115,13 +168,34 @@ function parseWorkbook(wb) {
     const typeValue = docTypeFor(h, entities);
     const type = DOC_TYPES.find(x => x.value === typeValue);
     const docCode = key(h[1]);
+    // BC 2.7 memakai posisi entitas yang berbeda menurut arah dokumen:
+    // Keluar: Chinli = kode 3, customer = kode 8.
+    // Masuk: customer/supplier eksternal = kode 3, Chinli = kode 8.
+    // Untuk laporan, nama pihak eksternal BC 2.7 Masuk diambil dari kode 3.
+    const isBc27 = docCode === "27";
     const customerEntity = entities.find(e => key(e[2]) === "8");
-    const supplierEntity = entities.find(e => key(e[2]) === "9");
-    const defaultPartyCode = type ? (type.direction === "out" ? "8" : "9") : "";
+    // Pengecualian BC 2.3: supplier menggunakan Kode Entitas 5 (kolom C),
+    // dan nama diambil dari kolom F pada baris ENTITAS yang sama.
+    const supplierEntity = docCode === "23"
+      ? entities.find(e => key(e[2]) === "5")
+      : isBc27 && type?.direction === "in"
+        ? entities.find(e => key(e[2]) === "3")
+        : entities.find(e => key(e[2]) === "9");
+    const defaultPartyCode = docCode === "23"
+      ? "5"
+      : isBc27
+        ? (type?.direction === "out" ? "8" : "3")
+        : (type ? (type.direction === "out" ? "8" : "9") : "");
     const partyEntity = entities.find(e => key(e[2]) === defaultPartyCode);
     const regNo = key(h[93]); // HEADER kolom CP = NOMOR DAFTAR (0-based index 93)
     const regDate = h[94];    // HEADER kolom CQ = TANGGAL DAFTAR (0-based index 94)
-    const purposeCode = h[13];
+    // Pengecualian BC 2.3: Jenis Tujuan Transaksi diambil dari BARANG kolom AZ
+    // (KODE PERHITUNGAN), bukan HEADER kolom N. Ambil kode pertama yang terisi
+    // pada barang dengan nomor aju yang sama; master BC 2.3 memetakan kode 1 dan 2.
+    const goodsForAju = goodsByAju.get(aju) || [];
+    const purposeCode = docCode === "23"
+      ? (goodsForAju.find(g => key(g[51]) !== "")?.[51] ?? "")
+      : h[13];
     const packages = new Map(), seals = [];
     for (const p of (packByAju.get(aju) || [])) {
       const pkgCode = norm(p[2]), qty = Number(p[3] || 0), seal = norm(p[5]);
@@ -129,7 +203,7 @@ function parseWorkbook(wb) {
       if (seal && !seals.includes(seal)) seals.push(seal);
     }
     const quantities = new Map(), descriptions = [];
-    for (const g of (goodsByAju.get(aju) || [])) {
+    for (const g of goodsForAju) {
       const unit = norm(g[9]), qty = Number(g[10] || 0), desc = norm(g[4]);
       if (unit && Number.isFinite(qty) && qty !== 0) quantities.set(unit,(quantities.get(unit)||0)+qty);
       if (desc && !descriptions.includes(desc)) descriptions.push(desc);
@@ -253,12 +327,12 @@ function renderUploadedFiles() {
 function removeUploadedFile(fileId) {
   const item = uploadedFiles.get(fileId);
   if (!item) return;
-  item.records.forEach(r => redNumbers.delete(r.recordId));
+  item.records.forEach(r => { redNumbers.delete(r.recordId); selectedExportIds.delete(r.recordId); });
   uploadedFiles.delete(fileId);
-  records = [...uploadedFiles.values()].flatMap(x => x.records);
+  rebuildRecords();
   if (!records.length) {
     $("docType").disabled = true; $("partyMode").disabled = true; $("partyName").disabled = true;
-    $("generateBtn").disabled = true; $("copyBtn").disabled = true;
+    $("generateBtn").disabled = true; $("copyBtn").disabled = true; $("exportBtn").disabled = true; if ($("copyExcelBtn")) $("copyExcelBtn").disabled = true;
     $("docType").innerHTML = '<option value="">Unggah Excel terlebih dahulu</option>';
     $("partyName").innerHTML = '<option value="__ALL__">Semua pihak</option>';
     $("redList").className = "red-list empty"; $("redList").textContent = "Unggah Excel untuk menampilkan daftar dokumen.";
@@ -276,14 +350,146 @@ function sumMap(map) {
 function packageText(map) {
   return [...map.entries()].filter(([,v])=>v!==0).map(([k,v])=>`${fmtQty(v)} ${k}`).join(" + ") || "-";
 }
+function getFilteredReportDocs() {
+  const mode = currentPartyMode();
+  const partyFilter = $("partyName").value;
+  return selectedTypeRecords()
+    .map(r => ({...r, reportPartyName: mode === "customer" ? r.customerName : r.supplierName}))
+    .filter(r => r.reportPartyName &&
+      (partyFilter === "__ALL__" || r.reportPartyName === partyFilter) &&
+      !isExcluded(r));
+}
+function renderExportList() {
+  const list = $("exportList");
+  if (!list) return;
+  const docs = getFilteredReportDocs();
+  const q = norm($("exportSearch")?.value).toLowerCase();
+  const filtered = docs.filter(r =>
+    `${r.regNo} ${r.aju} ${r.reportPartyName} ${r.sourceName}`.toLowerCase().includes(q)
+  );
+  list.innerHTML = "";
+  if (!filtered.length) {
+    list.className = "export-list empty";
+    list.textContent = docs.length ? "Tidak ada dokumen sesuai pencarian." : "Tidak ada dokumen yang memenuhi filter laporan.";
+    updateExportSelectionStatus(docs);
+    return;
+  }
+  list.className = "export-list";
+  filtered.forEach(r => {
+    const label = document.createElement("label");
+    label.className = "export-row";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = selectedExportIds.has(r.recordId);
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedExportIds.add(r.recordId);
+      else selectedExportIds.delete(r.recordId);
+      updateExportSelectionStatus(docs);
+      updateExportButton();
+    });
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    const title = document.createElement("strong");
+    title.textContent = r.regNo;
+    const small = document.createElement("small");
+    small.textContent = `${r.aju} · ${r.reportPartyName} · ${dateText(r.regDate) || "Tanggal daftar kosong"}`;
+    meta.append(title, small);
+    label.append(cb, meta);
+    list.append(label);
+  });
+  updateExportSelectionStatus(docs);
+}
+function updateExportSelectionStatus(docs = getFilteredReportDocs()) {
+  const selected = docs.filter(r => selectedExportIds.has(r.recordId)).length;
+  const status = $("exportSelectionStatus");
+  if (status) status.textContent = `${selected} dari ${docs.length} dokumen dipilih untuk ekspor.`;
+}
+function updateExportButton() {
+  const docs = getFilteredReportDocs();
+  const selected = docs.filter(r => selectedExportIds.has(r.recordId)).length;
+  $("exportBtn").disabled = !selected;
+  if ($("copyExcelBtn")) $("copyExcelBtn").disabled = !selected;
+}
+function getExcelReportRows() {
+  const docs = getFilteredReportDocs().filter(r => selectedExportIds.has(r.recordId));
+  const movementDateRaw = $("movementDate").value;
+  const movementDate = movementDateRaw
+    ? dateText(new Date(`${movementDateRaw}T12:00:00`))
+    : "";
+  // Format mengikuti template Laporan EXIM: enam kolom tetap A-F.
+  // Kolom E mengikuti tanggal pergerakan yang dipilih pada pengaturan laporan.
+  return docs.map(r => ({
+    "Jenis/Kode Dokumen": `${r.typeLabel} (Kode ${r.docCode})`,
+    "Nomor AJU": String(r.aju ?? ""),
+    "Nomor Daftar": String(r.regNo ?? ""),
+    "Tanggal Daftar": dateText(r.regDate),
+    "Tanggal Keluar": movementDate,
+    "Nama Customer": r.reportPartyName || ""
+  }));
+}
+function buildExcelWorksheet(rows) {
+  const headers = ["Jenis/Kode Dokumen","Nomor AJU","Nomor Daftar","Tanggal Daftar","Tanggal Keluar","Nama Customer"];
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows.map(r => headers.map(h => String(r[h] ?? "")))]);
+  ws["!cols"] = [
+    {wch:22.832}, {wch:28.832}, {wch:22.832}, {wch:16.832}, {wch:18.832}, {wch:42.832}
+  ];
+  // Pastikan AJU dan Nomor Daftar benar-benar bertipe teks agar nol di depan tidak hilang.
+  for (let row=2; row<=rows.length+1; row++) {
+    for (const col of ["B","C"]) {
+      const cell=ws[`${col}${row}`];
+      if (cell) { cell.t="s"; cell.v=String(cell.v); }
+    }
+  }
+  return ws;
+}
+async function copyExcelReport() {
+  const rows = getExcelReportRows();
+  if (!rows.length) {
+    $("outputStatus").textContent = "Tidak ada dokumen yang dipilih untuk disalin ke Excel.";
+    return;
+  }
+  const headers = ["Jenis/Kode Dokumen","Nomor AJU","Nomor Daftar","Tanggal Daftar","Tanggal Keluar","Nama Customer"];
+  // Tanda apostrof di depan AJU dan Nomor Daftar menjaga nol awal saat ditempel ke Excel.
+  const lines = [headers, ...rows.map(r => headers.map(h => {
+    const value = String(r[h] ?? "");
+    return (h === "Nomor AJU" || h === "Nomor Daftar") && value ? `'${value}` : value;
+  }))];
+  const tsv = lines.map(line => line.map(value => String(value).replace(/\t/g," ").replace(/\r?\n/g," ")).join("\t")).join("\n");
+  try {
+    await navigator.clipboard.writeText(tsv);
+    $("outputStatus").textContent = `Berhasil menyalin ${rows.length} baris data Excel. Buka Excel lalu tempel mulai dari sel A1.`;
+  } catch {
+    const helper=document.createElement("textarea");
+    helper.value=tsv;
+    helper.style.position="fixed"; helper.style.opacity="0";
+    document.body.append(helper); helper.focus(); helper.select();
+    const ok=document.execCommand("copy");
+    helper.remove();
+    $("outputStatus").textContent = ok
+      ? `Berhasil menyalin ${rows.length} baris data Excel. Tempel mulai dari sel A1.`
+      : "Browser tidak mengizinkan penyalinan otomatis. Silakan coba kembali melalui browser.";
+  }
+}
+function exportExcelReport() {
+  const type = DOC_TYPES.find(x => x.value === $("docType").value);
+  const rows = getExcelReportRows();
+  if (!type || !rows.length) {
+    $("outputStatus").textContent = "Tidak ada dokumen sesuai filter untuk diekspor.";
+    return;
+  }
+  const ws = buildExcelWorksheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Laporan EXIM");
+  const datePart = $("movementDate").value || dateInputToday();
+  const filename = `Laporan_EXIM_${type.value}_${datePart}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  $("outputStatus").textContent = `Berhasil mengekspor ${rows.length} dokumen. Format mengikuti template Laporan EXIM.`;
+}
 function buildReport() {
   const type = DOC_TYPES.find(x=>x.value===$("docType").value);
   if (!type) return "";
-  const mode = currentPartyMode();
   const labelMode = currentPartyLabelMode();
-  const partyFilter = $("partyName").value;
-  const docs = selectedTypeRecords().map(r => ({...r, reportPartyName: mode === "customer" ? r.customerName : r.supplierName}))
-    .filter(r => r.reportPartyName && (partyFilter === "__ALL__" || r.reportPartyName === partyFilter) && !isExcluded(r));
+  const docs = getFilteredReportDocs();
   if (!docs.length) return "Tidak ada dokumen yang sesuai dengan filter atau semua nomor daftar telah dikecualikan.";
   const movementDateRaw = $("movementDate").value;
   const movementDate = movementDateRaw ? dateText(new Date(`${movementDateRaw}T12:00:00`)) : dateText(new Date());
@@ -309,11 +515,11 @@ function buildReport() {
       routePurposeGroups.get(groupKey).docs.push(r);
     });
     for (const {route, purpose, docs:purposeDocs} of routePurposeGroups.values()) {
-      const numbers = purposeDocs.map(r => r.regNo).filter(n => n && !n.startsWith("(") && n !== "0");
+      const numbers = purposeDocs.map(r => r.regNo).filter(n => n && !n.startsWith("(") && n !== "0").sort(naturalSort);
       output.push(`${type.label.toUpperCase()} (${route} | ${purpose}) : ${numbers.join(", ") || "-"}`);
     }
 
-    const allSeals = [...new Set(partyDocs.flatMap(r => r.seals))];
+    const allSeals = [...new Set(partyDocs.flatMap(r => r.seals))].sort(naturalSort);
     if (["27-out","27-in","23-in"].includes(type.value)) output.push(`No. Segel : ${allSeals.join(", ") || "-"}`);
     output.push(`Jumlah Dokumen : ${partyDocs.length} Dokumen`);
     output.push(`Jenis Barang : ${goodsType}`);
@@ -332,7 +538,9 @@ function buildReport() {
   return output.join("\n").trim();
 }
 function updateOutput() {
-  if (records.length && !$ ("generateBtn").disabled) $("output").value = buildReport();
+  if (records.length && !$("generateBtn").disabled) $("output").value = buildReport();
+  renderExportList();
+  updateExportButton();
 }
 function refreshAll() {
   refreshPartyOptions();
@@ -341,7 +549,10 @@ function refreshAll() {
   const hasRecords = records.length > 0;
   $("generateBtn").disabled = !hasRecords;
   $("copyBtn").disabled = !hasRecords;
+  $("exportBtn").disabled = !hasRecords || !getFilteredReportDocs().length;
   $("output").value = hasRecords ? buildReport() : "";
+  renderExportList();
+  updateExportButton();
 }
 function setupDocTypes() {
   const previous = $("docType").value;
@@ -369,7 +580,7 @@ $("excelFile").addEventListener("change", async (event) => {
       console.error(err);
     }
   }
-  records = [...uploadedFiles.values()].flatMap(x => x.records);
+  rebuildRecords();
   if (records.length) {
     setupDocTypes();
     $("docType").disabled = false; $("partyMode").disabled = false; $("partyName").disabled = false;
@@ -385,9 +596,10 @@ $("excelFile").addEventListener("change", async (event) => {
   event.target.value = ""; // izinkan memilih ulang nama file yang sama bila diperlukan
 });
 $("clearFilesBtn").addEventListener("click",()=>{
-  uploadedFiles.clear(); records=[]; redNumbers.clear(); excludedNumbers.clear();
+  uploadedFiles.clear(); records=[]; duplicateRecords=[]; redNumbers.clear(); excludedNumbers.clear(); selectedExportIds.clear();
+  updateDuplicateStatus();
   $("excludeManual").value=""; $("docType").disabled=true; $("partyMode").disabled=true; $("partyName").disabled=true;
-  $("generateBtn").disabled=true; $("copyBtn").disabled=true;
+  $("generateBtn").disabled=true; $("copyBtn").disabled=true; $("exportBtn").disabled=true; if ($("copyExcelBtn")) $("copyExcelBtn").disabled=true;
   $("docType").innerHTML='<option value="">Unggah Excel terlebih dahulu</option>';
   $("partyName").innerHTML='<option value="__ALL__">Semua pihak</option>';
   $("redList").className="red-list empty"; $("redList").textContent="Unggah Excel untuk menampilkan daftar dokumen.";
@@ -401,12 +613,24 @@ $("docType").addEventListener("change",()=>{
 });
 $("partyMode").addEventListener("change",refreshAll);
 $("partyName").addEventListener("change",refreshAll);
+$("exportSearch").addEventListener("input",renderExportList);
+$("selectAllExportBtn").addEventListener("click",()=>{
+  getFilteredReportDocs().forEach(r=>selectedExportIds.add(r.recordId));
+  renderExportList();
+  updateExportButton();
+});
+$("clearExportSelectionBtn").addEventListener("click",()=>{
+  selectedExportIds.clear();
+  renderExportList();
+  updateExportButton();
+});
 $("goodsType").addEventListener("input",()=>{if(records.length)$("output").value=buildReport();});
 $("movementDate").addEventListener("change",()=>{if(records.length)$("output").value=buildReport();});
 $("redSearch").addEventListener("input",renderRedList);
 $("excludeSearch").addEventListener("input",renderExcludeList);
 $("excludeManual").addEventListener("input",()=>{updateExcludeStatus(); if(records.length)$("output").value=buildReport();});
 $("generateBtn").addEventListener("click",()=>{$("output").value=buildReport();$("outputStatus").textContent="Laporan diperbarui. Periksa isi sebelum dikirim.";});
+$("exportBtn").addEventListener("click", exportExcelReport);\n$("copyExcelBtn").addEventListener("click", copyExcelReport);
 $("copyBtn").addEventListener("click",async()=>{
   try { await navigator.clipboard.writeText($("output").value); $("outputStatus").textContent="Laporan berhasil disalin."; }
   catch { $("output").focus(); $("output").select(); $("outputStatus").textContent="Browser tidak mengizinkan salin otomatis. Tekan Ctrl+C setelah teks dipilih."; }
