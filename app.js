@@ -442,7 +442,7 @@ $("excelFile").addEventListener("change", async (event) => {
       console.error(err);
     }
   }
-  records = [...uploadedFiles.values()].flatMap(x => x.records);
+  rebuildRecords();
   if (records.length) {
     setupDocTypes();
     $("docType").disabled = false; $("partyMode").disabled = false; $("partyName").disabled = false;
