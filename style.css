@@ -14,3 +14,10 @@ footer{font-size:12px;color:#7a8494;text-align:center;padding:12px}
 @media(max-width:640px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}.section-title{flex-direction:column}.section-title input{max-width:none}.panel{padding:17px}.uploaded-file{align-items:flex-start}}
 
 .duplicate-status{white-space:pre-line;border-radius:9px;padding:12px 14px;margin-top:10px;font-size:13px;line-height:1.5}.duplicate-status.empty{color:#697588;background:#f7f8fa}.duplicate-status.clean{color:#176b3a;background:#edf8f1}.duplicate-status.warning{color:#8a4b08;background:#fff7e8;border:1px solid #f3d6a5}
+
+.export-list{display:grid;gap:8px;max-height:360px;overflow:auto;margin-top:14px}
+.export-row{display:flex;align-items:center;gap:12px;border:1px solid #e2e7ee;border-radius:9px;padding:11px 12px;font-weight:400}
+.export-row input{width:18px;height:18px;flex:0 0 auto}
+.export-row .meta{display:flex;flex-direction:column;gap:3px;min-width:0}
+.export-row strong{font-size:14px}
+.export-row small{font-size:12px;color:#697588;overflow-wrap:anywhere}
