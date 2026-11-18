@@ -30,6 +30,7 @@ let uploadedFiles = new Map();
 let fileSequence = 0;
 let redNumbers = new Set();
 let excludedNumbers = new Set();
+let selectedExportIds = new Set();
 function norm(v) { return String(v ?? "").trim(); }
 function key(v) { return norm(v).replace(/\.0$/, ""); }
 function updateDuplicateStatus() {
@@ -326,7 +327,7 @@ function renderUploadedFiles() {
 function removeUploadedFile(fileId) {
   const item = uploadedFiles.get(fileId);
   if (!item) return;
-  item.records.forEach(r => redNumbers.delete(r.recordId));
+  item.records.forEach(r => { redNumbers.delete(r.recordId); selectedExportIds.delete(r.recordId); });
   uploadedFiles.delete(fileId);
   rebuildRecords();
   if (!records.length) {
@@ -358,9 +359,59 @@ function getFilteredReportDocs() {
       (partyFilter === "__ALL__" || r.reportPartyName === partyFilter) &&
       !isExcluded(r));
 }
+function renderExportList() {
+  const list = $("exportList");
+  if (!list) return;
+  const docs = getFilteredReportDocs();
+  const q = norm($("exportSearch")?.value).toLowerCase();
+  const filtered = docs.filter(r =>
+    `${r.regNo} ${r.aju} ${r.reportPartyName} ${r.sourceName}`.toLowerCase().includes(q)
+  );
+  list.innerHTML = "";
+  if (!filtered.length) {
+    list.className = "export-list empty";
+    list.textContent = docs.length ? "Tidak ada dokumen sesuai pencarian." : "Tidak ada dokumen yang memenuhi filter laporan.";
+    updateExportSelectionStatus(docs);
+    return;
+  }
+  list.className = "export-list";
+  filtered.forEach(r => {
+    const label = document.createElement("label");
+    label.className = "export-row";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = selectedExportIds.has(r.recordId);
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedExportIds.add(r.recordId);
+      else selectedExportIds.delete(r.recordId);
+      updateExportSelectionStatus(docs);
+      updateExportButton();
+    });
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    const title = document.createElement("strong");
+    title.textContent = r.regNo;
+    const small = document.createElement("small");
+    small.textContent = `${r.aju} · ${r.reportPartyName} · ${dateText(r.regDate) || "Tanggal daftar kosong"}`;
+    meta.append(title, small);
+    label.append(cb, meta);
+    list.append(label);
+  });
+  updateExportSelectionStatus(docs);
+}
+function updateExportSelectionStatus(docs = getFilteredReportDocs()) {
+  const selected = docs.filter(r => selectedExportIds.has(r.recordId)).length;
+  const status = $("exportSelectionStatus");
+  if (status) status.textContent = `${selected} dari ${docs.length} dokumen dipilih untuk ekspor.`;
+}
+function updateExportButton() {
+  const docs = getFilteredReportDocs();
+  const selected = docs.filter(r => selectedExportIds.has(r.recordId)).length;
+  $("exportBtn").disabled = !selected;
+}
 function exportExcelReport() {
   const type = DOC_TYPES.find(x => x.value === $("docType").value);
-  const docs = getFilteredReportDocs();
+  const docs = getFilteredReportDocs().filter(r => selectedExportIds.has(r.recordId));
   if (!type || !docs.length) {
     $("outputStatus").textContent = "Tidak ada dokumen sesuai filter untuk diekspor.";
     return;
@@ -392,7 +443,7 @@ function exportExcelReport() {
   const datePart = movementDateRaw || dateInputToday();
   const filename = `Laporan_EXIM_${type.value}_${datePart}.xlsx`;
   XLSX.writeFile(wb, filename);
-  $("outputStatus").textContent = `Berhasil mengekspor ${docs.length} dokumen ke Excel. Isi file mengikuti filter laporan WhatsApp.`;
+  $("outputStatus").textContent = `Berhasil mengekspor ${docs.length} dokumen yang dipilih ke Excel. Isi file mengikuti filter laporan WhatsApp.`;
 }
 function buildReport() {
   const type = DOC_TYPES.find(x=>x.value===$("docType").value);
@@ -448,8 +499,8 @@ function buildReport() {
 }
 function updateOutput() {
   if (records.length && !$("generateBtn").disabled) $("output").value = buildReport();
-  const exportButton = $("exportBtn");
-  if (exportButton) exportButton.disabled = !records.length || !getFilteredReportDocs().length;
+  renderExportList();
+  updateExportButton();
 }
 function refreshAll() {
   refreshPartyOptions();
@@ -460,6 +511,8 @@ function refreshAll() {
   $("copyBtn").disabled = !hasRecords;
   $("exportBtn").disabled = !hasRecords || !getFilteredReportDocs().length;
   $("output").value = hasRecords ? buildReport() : "";
+  renderExportList();
+  updateExportButton();
 }
 function setupDocTypes() {
   const previous = $("docType").value;
@@ -503,7 +556,7 @@ $("excelFile").addEventListener("change", async (event) => {
   event.target.value = ""; // izinkan memilih ulang nama file yang sama bila diperlukan
 });
 $("clearFilesBtn").addEventListener("click",()=>{
-  uploadedFiles.clear(); records=[]; duplicateRecords=[]; redNumbers.clear(); excludedNumbers.clear();
+  uploadedFiles.clear(); records=[]; duplicateRecords=[]; redNumbers.clear(); excludedNumbers.clear(); selectedExportIds.clear();
   updateDuplicateStatus();
   $("excludeManual").value=""; $("docType").disabled=true; $("partyMode").disabled=true; $("partyName").disabled=true;
   $("generateBtn").disabled=true; $("copyBtn").disabled=true; $("exportBtn").disabled=true;
@@ -520,6 +573,17 @@ $("docType").addEventListener("change",()=>{
 });
 $("partyMode").addEventListener("change",refreshAll);
 $("partyName").addEventListener("change",refreshAll);
+$("exportSearch").addEventListener("input",renderExportList);
+$("selectAllExportBtn").addEventListener("click",()=>{
+  getFilteredReportDocs().forEach(r=>selectedExportIds.add(r.recordId));
+  renderExportList();
+  updateExportButton();
+});
+$("clearExportSelectionBtn").addEventListener("click",()=>{
+  selectedExportIds.clear();
+  renderExportList();
+  updateExportButton();
+});
 $("goodsType").addEventListener("input",()=>{if(records.length)$("output").value=buildReport();});
 $("movementDate").addEventListener("change",()=>{if(records.length)$("output").value=buildReport();});
 $("redSearch").addEventListener("input",renderRedList);
