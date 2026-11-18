@@ -25,12 +25,56 @@ const DOC_TYPES = [
   {value:"23-in", label:"BC 2.3", code:"23", direction:"in"}
 ];
 let records = [];
+let duplicateRecords = [];
 let uploadedFiles = new Map();
 let fileSequence = 0;
 let redNumbers = new Set();
 let excludedNumbers = new Set();
 function norm(v) { return String(v ?? "").trim(); }
 function key(v) { return norm(v).replace(/\.0$/, ""); }
+function updateDuplicateStatus() {
+  const panel = $("duplicateStatus");
+  if (!panel) return;
+  if (!uploadedFiles.size) {
+    panel.className = "duplicate-status empty";
+    panel.textContent = "Belum ada data untuk diperiksa.";
+    return;
+  }
+  if (!duplicateRecords.length) {
+    panel.className = "duplicate-status clean";
+    panel.textContent = `Tidak ditemukan duplikat. ${records.length} dokumen unik siap diproses.`;
+    return;
+  }
+  const lines = duplicateRecords.slice(0, 5).map((d, i) =>
+    `${i + 1}. AJU: ${d.aju}\n   Dipertahankan: ${d.firstSourceName}\n   Dilewati: ${d.duplicateSourceName}`
+  );
+  if (duplicateRecords.length > 5) lines.push(`...dan ${duplicateRecords.length - 5} duplikat lainnya.`);
+  panel.className = "duplicate-status warning";
+  panel.textContent = `Ditemukan ${duplicateRecords.length} data duplikat. ${records.length} dokumen unik diproses; data duplikat otomatis dilewati.\n\n${lines.join("\n\n")}`;
+}
+function rebuildRecords() {
+  const seen = new Map();
+  const unique = [];
+  duplicateRecords = [];
+  for (const item of uploadedFiles.values()) {
+    for (const r of item.records) {
+      const ajuKey = key(r.aju).toUpperCase();
+      if (!ajuKey) { unique.push(r); continue; }
+      if (seen.has(ajuKey)) {
+        duplicateRecords.push({
+          aju: ajuKey,
+          firstSourceName: seen.get(ajuKey).sourceName,
+          duplicateSourceName: r.sourceName
+        });
+        continue;
+      }
+      seen.set(ajuKey, r);
+      unique.push(r);
+    }
+  }
+  records = unique;
+  updateDuplicateStatus();
+}
 function excelDate(v) {
   if (v instanceof Date && !isNaN(v)) return v;
   if (typeof v === "number" && v > 20000 && v < 80000) {
@@ -284,7 +328,7 @@ function removeUploadedFile(fileId) {
   if (!item) return;
   item.records.forEach(r => redNumbers.delete(r.recordId));
   uploadedFiles.delete(fileId);
-  records = [...uploadedFiles.values()].flatMap(x => x.records);
+  rebuildRecords();
   if (!records.length) {
     $("docType").disabled = true; $("partyMode").disabled = true; $("partyName").disabled = true;
     $("generateBtn").disabled = true; $("copyBtn").disabled = true;
@@ -414,7 +458,8 @@ $("excelFile").addEventListener("change", async (event) => {
   event.target.value = ""; // izinkan memilih ulang nama file yang sama bila diperlukan
 });
 $("clearFilesBtn").addEventListener("click",()=>{
-  uploadedFiles.clear(); records=[]; redNumbers.clear(); excludedNumbers.clear();
+  uploadedFiles.clear(); records=[]; duplicateRecords=[]; redNumbers.clear(); excludedNumbers.clear();
+  updateDuplicateStatus();
   $("excludeManual").value=""; $("docType").disabled=true; $("partyMode").disabled=true; $("partyName").disabled=true;
   $("generateBtn").disabled=true; $("copyBtn").disabled=true;
   $("docType").innerHTML='<option value="">Unggah Excel terlebih dahulu</option>';
