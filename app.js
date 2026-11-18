@@ -407,7 +407,8 @@ function updateExportSelectionStatus(docs = getFilteredReportDocs()) {
 function updateExportButton() {
   const docs = getFilteredReportDocs();
   const selected = docs.filter(r => selectedExportIds.has(r.recordId)).length;
-  $("exportBtn").disabled = !selected;\n  if ($("copyExcelBtn")) $("copyExcelBtn").disabled = !selected;
+  $("exportBtn").disabled = !selected;
+  if ($("copyExcelBtn")) $("copyExcelBtn").disabled = !selected;
 }
 function getExcelReportRows() {
   const docs = getFilteredReportDocs().filter(r => selectedExportIds.has(r.recordId));
