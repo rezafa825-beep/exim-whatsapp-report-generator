@@ -506,7 +506,7 @@ $("clearFilesBtn").addEventListener("click",()=>{
   uploadedFiles.clear(); records=[]; duplicateRecords=[]; redNumbers.clear(); excludedNumbers.clear();
   updateDuplicateStatus();
   $("excludeManual").value=""; $("docType").disabled=true; $("partyMode").disabled=true; $("partyName").disabled=true;
-  $("generateBtn").disabled=true; $("copyBtn").disabled=true;
+  $("generateBtn").disabled=true; $("copyBtn").disabled=true; $("exportBtn").disabled=true;
   $("docType").innerHTML='<option value="">Unggah Excel terlebih dahulu</option>';
   $("partyName").innerHTML='<option value="__ALL__">Semua pihak</option>';
   $("redList").className="red-list empty"; $("redList").textContent="Unggah Excel untuk menampilkan daftar dokumen.";
